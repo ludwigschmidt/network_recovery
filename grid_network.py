@@ -79,7 +79,30 @@ def get_grounded_potentials(g, probe_node):
     for ii, node in enumerate(node_order):
         res[node] = vec_res[ii] - ground_potential
     return res
-    
+
+
+def get_grounded_potentials_as_matrix(g, probe_node):
+    potentials = get_grounded_potentials(g, probe_node)
+    res = np.zeros((g.width, g.height))
+    for node, potential in potentials.items():
+        if node != ground_node:
+            xx = node[0]
+            yy = node[1]
+            res[yy, xx] = potential
+    return res
+
+
+def get_grounded_potentials_and_plot(g, probe_node):
+    data = get_grounded_potentials_as_matrix(g, probe_node)
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    img = ax.imshow(data, origin='lower', interpolation='nearest')
+    ax.set_title('Probe node: x = {}, y = {}'.format(probe_node[0], probe_node[1]))
+    ax.set_ylabel('y coordinate in grid')
+    ax.set_xlabel('x coordinate in grid')
+    fig.colorbar(img)
+    return fig
+
 
 def set_resistance(g, node1, node2, resistance):
     g.graph[node1][node2]['weight'] = 1.0 / resistance
