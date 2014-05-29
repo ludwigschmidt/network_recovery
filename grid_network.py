@@ -1,4 +1,5 @@
 import collections
+import math
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
@@ -6,9 +7,9 @@ import numpy as np
 GridGraph = collections.namedtuple('GridGraph', ['graph', 'width', 'height', 'grid_type'])
 
 ground_node = (-1, -1)
-no_resistance = 1e10
+no_resistance = 1e8
 normal_resistance = 1
-large_resistance = 1e-10
+large_resistance = 1e-8
 
 def build_grid(w, h, grid_type):
     if grid_type == 'plain' or grid_type == 'periodic':
@@ -22,11 +23,11 @@ def build_grid(w, h, grid_type):
             data['weight'] = normal_resistance
         g.add_node(ground_node)
         for xx in range(w):
-            g.add_edge(ground_node, (xx, 0), weight=no_resistance)
-            g.add_edge(ground_node, (xx, h - 1), weight=no_resistance)
+            g.add_edge(ground_node, (xx, 0), weight=normal_resistance)
+            g.add_edge(ground_node, (xx, h - 1), weight=normal_resistance)
         for yy in range(h):
-            g.add_edge(ground_node, (0, yy), weight=no_resistance)
-            g.add_edge(ground_node, (w - 1, yy), weight=no_resistance)
+            g.add_edge(ground_node, (0, yy), weight=normal_resistance)
+            g.add_edge(ground_node, (w - 1, yy), weight=normal_resistance)
         return GridGraph(g, w, h, grid_type)
     print 'Unknown grid_type!'
     return []
@@ -81,8 +82,9 @@ def get_grounded_potentials(g, probe_node):
     return res
 
 
-def get_grounded_potentials_as_matrix(g, probe_node):
-    potentials = get_grounded_potentials(g, probe_node)
+def get_grounded_potentials_as_matrix(g, probe_node, potentials=None):
+    if not potentials:
+        potentials = get_grounded_potentials(g, probe_node)
     res = np.zeros((g.width, g.height))
     for node, potential in potentials.items():
         if node != ground_node:
@@ -92,8 +94,9 @@ def get_grounded_potentials_as_matrix(g, probe_node):
     return res
 
 
-def get_grounded_potentials_and_plot(g, probe_node):
-    data = get_grounded_potentials_as_matrix(g, probe_node)
+def get_grounded_potentials_and_plot(g, probe_node, data=None):
+    if data is None:
+        data = get_grounded_potentials_as_matrix(g, probe_node)
     fig = plt.figure()
     ax = fig.add_subplot(111)
     img = ax.imshow(data, origin='lower', interpolation='nearest')
@@ -103,6 +106,43 @@ def get_grounded_potentials_and_plot(g, probe_node):
     fig.colorbar(img)
     return fig
 
+
+def get_grounded_potentials_and_plot_curve(g, probe_node, use_log_scale=False, potentials=None):
+    if not potentials:
+        potentials = get_grounded_potentials(g, probe_node)
+    plot_data = []
+    for node, potential in potentials.items():
+        if node != ground_node:
+            plot_data.append((dst2(probe_node, node), potential))
+    xvals = [x for (x,y) in plot_data]
+    yvals = [y for (x,y) in plot_data]
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    if use_log_scale:
+        ax.set_yscale('log')
+    ax.set_xlim(min(xvals) - .5, max(xvals) + .5)
+    y_bounded = map(lambda x: x if x > 1e-16 else 1e-16, yvals)
+    ax.scatter(xvals, y_bounded)
+    ax.set_ylabel('Potential of node')
+    ax.set_xlabel('L2-distance to probe node')
+    ax.set_title('Probe node: x = {}, y = {}'.format(probe_node[0], probe_node[1]))
+    return fig
+
+
+def run_grounded_experiment(g, probe_node):
+    potentials = get_grounded_potentials(g, probe_node)
+    img_data = get_grounded_potentials_as_matrix(g, probe_node, potentials=potentials)
+    basename = 'grounded_{}_{}__{}_{}'.format(g.width, g.height, probe_node[0], probe_node[1])
+    
+    fig1 = get_grounded_potentials_and_plot(g, probe_node, data=img_data)
+    fig1.savefig(basename + '__img.pdf', bbox_inches='tight')
+    
+    fig2 = get_grounded_potentials_and_plot_curve(g, probe_node, use_log_scale=False, potentials=potentials)
+    fig2.savefig(basename + '__curve.pdf', bbox_inches='tight')
+    
+    fig3 = get_grounded_potentials_and_plot_curve(g, probe_node, use_log_scale=True, potentials=potentials)
+    fig3.savefig(basename + '__curve_log.pdf', bbox_inches='tight')
+    
 
 def set_resistance(g, node1, node2, resistance):
     g.graph[node1][node2]['weight'] = 1.0 / resistance
@@ -178,3 +218,9 @@ def dst((x1, y1), (x2, y2), periodic=False, w=-1, h=-1):
         return minx + miny
     else:
         return x2 - x1 + y2 - y1
+
+
+def dst2((x1, y1), (x2, y2)):
+    dx = x1 - x2;
+    dy = y1 - y2;
+    return math.sqrt(dx * dx + dy * dy)
