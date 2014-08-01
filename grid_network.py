@@ -3,6 +3,8 @@ import math
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
+import scipy
+import scipy.sparse.linalg
 
 GridGraph = collections.namedtuple('GridGraph', ['graph', 'width', 'height', 'grid_type'])
 
@@ -11,7 +13,7 @@ no_resistance = 1e8
 normal_resistance = 1
 large_resistance = 1e-8
 
-def build_grid(w, h, grid_type):
+def build_grid(w, h, grid_type='plain'):
     if grid_type == 'plain' or grid_type == 'periodic':
         g = nx.grid_2d_graph(w, h, periodic=(grid_type == 'periodic'))
         for i, j, data in g.edges(data=True):
@@ -56,16 +58,67 @@ def node_vector(g, node):
     return v
 
 
-def laplacian(g):
+def laplacian(g, sparse=True):
     node_order = nodes(g)
-    return np.asarray(nx.laplacian_matrix(g.graph, node_order))
+    if sparse:
+        return nx.laplacian_matrix(g.graph, node_order)
+    else:
+        return np.asarray(nx.laplacian_matrix(g.graph, node_order))
 
 
 def effective_resistance(g, node1, node2):
     v = node_vector(g, node1) - node_vector(g, node2)
     tmp = np.dot(np.linalg.pinv(laplacian(g)), v)
     return np.dot(v, tmp)
+
+
+def solve_laplacian(A, b, method='solve_scipy_sparse'):
+    if method == 'pinv':
+        return np.dot(np.linalg.pinv(A), b)
+    elif method == 'solve':
+        tmp = np.linalg.solve(A, b)
+        return tmp - tmp.mean()
+    elif method == 'solve_scipy':
+        tmp = scipy.linalg.solve(A, b, check_finite=False)
+        return tmp - tmp.mean()
+    elif method == 'solve_scipy_sparse':
+        tmp = scipy.sparse.linalg.spsolve(A, b)
+        return tmp - tmp.mean()
+    elif method == 'solve_scipy_sparse_cg':
+        tmp, _ = scipy.sparse.linalg.cg(A, b)
+        return tmp - tmp.mean()
+    else:
+        print 'Unknown solution method!'
+        return None
     
+
+def add_vertical_fault(g, x, y1, y2):
+    for y in range(y1, y2 + 1):
+        g.graph.remove_edge((x, y), (x + 1, y))
+
+
+def get_potentials_as_matrix(g, node1, node2):
+    v = node_vector(g, node1) - node_vector(g, node2)
+    vec_res = solve_laplacian(laplacian(g), v)
+    node_order = nodes(g)
+    res = np.zeros((g.height, g.width))
+    for ii, (x, y) in enumerate(node_order):
+        res[x][y] = vec_res[ii]
+    return res
+
+
+def get_potentials_and_plot(g, node1, node2, data=None):
+    if data is None:
+        data = get_potentials_as_matrix(g, node1, node2)
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    img = ax.imshow(data.transpose(), origin='lower', interpolation='nearest')
+    ax.set_title('Node 1: x = {}, y = {}   Node 2: x = {}, y = {}'.format(node1[0], node1[1], node2[0], node2[1]))
+    ax.set_ylabel('y coordinate in grid')
+    ax.set_xlabel('x coordinate in grid')
+    fig.colorbar(img)
+    return fig, data
+
 
 def get_grounded_potentials(g, probe_node):
     if g.grid_type != 'grounded_boundary':
@@ -85,7 +138,7 @@ def get_grounded_potentials(g, probe_node):
 def get_grounded_potentials_as_matrix(g, probe_node, potentials=None):
     if not potentials:
         potentials = get_grounded_potentials(g, probe_node)
-    res = np.zeros((g.width, g.height))
+    res = np.zeros((g.height, g.width))
     for node, potential in potentials.items():
         if node != ground_node:
             xx = node[0]
@@ -224,3 +277,47 @@ def dst2((x1, y1), (x2, y2)):
     dx = x1 - x2;
     dy = y1 - y2;
     return math.sqrt(dx * dx + dy * dy)
+   
+   
+def gen_constructed_potentials(size, fault_height, w):
+    fault_low = size / 2 - fault_height / 2
+    alpha = 1.0 / pow(w, 1.1)
+    beta = (.5 - alpha) * math.pi
+    p = np.zeros((size, size))
+    for y in range(0, size / 2):
+        for x in range(0, size / 2):
+            dx = size / 2 - x
+            dy = fault_low - y
+            r = math.sqrt(dx * dx + dy * dy)
+            phi = math.atan2(dy, dx)
+            if phi >= beta:
+                arcval = 1.0 / (r / w + 1.0)
+                t = (phi - beta) / (math.pi / 2.0 - beta)
+                p[x, y] = (1.0 - t) * arcval
+            elif phi >= 0.0:
+                arcval = 1.0 / (r / w + 1.0)
+                p[x, y] = arcval
+            else:
+                r = math.sqrt(dx * dx)
+                arcval = 1.0 / (r / w + 1.0)
+                p[x, y] = arcval
+                
+        for x in range(size / 2, size):
+            p[x, y] = -p[size - x - 1, y]
+    
+    for y in range(size / 2, size):
+        for x in range(0, size):
+            p[x, y] = p[x, size - y - 1]
+    return p
+
+
+def construct_potentials_and_plot(size, fault_height, w):
+    p = gen_constructed_potentials(size, fault_height, w)
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    img = ax.imshow(p.transpose(), origin='lower', interpolation='nearest')
+    ax.set_title('Fault height = {}, w = {}'.format(fault_height, w))
+    ax.set_ylabel('y coordinate in grid')
+    ax.set_xlabel('x coordinate in grid')
+    fig.colorbar(img)
+    return fig, p
